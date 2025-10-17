@@ -1,0 +1,8 @@
+
+/0_old_versions
+*.csv
+*.txt
+*.zip
+*.json
+
+DataProcessing/output/
