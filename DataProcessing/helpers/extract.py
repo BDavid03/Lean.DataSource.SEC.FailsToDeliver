@@ -27,9 +27,10 @@ def extract() -> None:
         html = sess.get(SEC_URL, timeout=60).text
         soup = BS(html, "html.parser")
         urls = sorted({
-            urljoin(SEC_URL, a["href"])
+            urljoin(SEC_URL, a["href"].split("#", 1)[0])
             for a in soup.find_all("a", href=True)
-            if a["href"].lower().endswith((".zip", ".txt"))
+            if any(a["href"].lower().split("#", 1)[0].split("?", 1)[0].endswith(ext)
+                for ext in (".zip", ".txt"))
         })
 
         new = [u for u in urls if u not in seen]
@@ -48,11 +49,12 @@ def extract() -> None:
                         r = fut.result()
                         r.raise_for_status()
 
-                        if url.lower().endswith(".zip"):
+                        is_zip = url.lower().split("#", 1)[0].split("?", 1)[0].endswith(".zip")
+                        if is_zip:
                             with ZipFile(BytesIO(r.content)) as z:
                                 z.extractall(RAW)
                         else:
-                            (RAW / Path(url.split("?", 1)[0]).name).write_bytes(r.content)
+                            (RAW / Path(url.split("?", 1)[0].split("#", 1)[0]).name).write_bytes(r.content)
 
                         seen.add(url)
                     except Exception as e:

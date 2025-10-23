@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 SEC_URL = "https://www.sec.gov/data-research/sec-markets-data/fails-deliver-data"
 
-UA = "FailToDeliver Ingestion"
+UA = "FTD-Pipeline/1.1 (contact: you@example.com)"
 
 HDRS = {"User-Agent": UA, "Accept": "application/zip,text/plain,*/*;q=0.8", "Referer": SEC_URL}
 
@@ -25,11 +25,25 @@ dirs = {
     "STATE": base / "output" / "temp" / "state",
 }
 
-for m in dirs.values():
-    if m.exists() == False:
-        m.mkdir(parents=True, exist_ok=True)
-        logging.info(f"Found - {m} missing, Building now")        
-logging.info("All Directories Found")    
+def create_paths() -> Path:
+    for m in dirs.values():
+        if m.exists() == False:
+            m.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Found - {m} missing, Building now")        
+    logging.info("All Directories Found")    
 
 
 
+
+'''
+    files = {}
+    files["DOWNLOADED"] = dirs["STATE"] / "downloaded.json"
+    files["LAST_RUN"]   = dirs["STATE"] / "recent.json"
+    files["MASTER"]     = dirs["SRC"]   / "master.csv"
+
+    return dirs, files
+
+def SEC_URL() -> str:
+    return "https://www.sec.gov/data-research/sec-markets-data/fails-deliver-data"
+    
+    '''
