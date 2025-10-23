@@ -1,0 +1,183 @@
+from __future__ import annotations
+from pathlib import Path
+import polars as pl
+
+
+# ---------- low-level io ----------
+
+def _read_pipe_csv_any(p: Path) -> pl.DataFrame:
+    """
+    Read an SEC FTD raw file that is usually pipe-delimited.
+    Try UTF-8 then latin-1; fall back to a generic read.
+    No header; ragged lines tolerated.
+    """
+    for enc in ("utf-8", "latin1"):
+        try:
+            return pl.read_csv(
+                p,
+                separator="|",
+                has_header=False,
+                ignore_errors=True,
+                truncate_ragged_lines=True,
+                encoding=enc,
+            )
+        except Exception:
+            continue
+    # last resort (rare)
+    return pl.read_csv(
+        p,
+        has_header=False,
+        ignore_errors=True,
+        truncate_ragged_lines=True,
+    )
+
+
+# ---------- cleaners ----------
+
+def clean_one_file(path: Path, out_dir: Path) -> Path | None:
+    """
+    - Load raw (pipe) file with no header.
+    - If a row has a value in 'column 7' (our c7), treat that as:
+        new c5 := c5 + '|' + c6   (trim leading/trailing '|')
+        new c6 := old c7
+      Then drop c7 from output.
+    - Drop rows where column 2 (c2) is null/empty.
+    - Save to CSV (same stem) in out_dir (with header c1..cN).
+    Returns the cleaned CSV path, or None if empty.
+    """
+    df = _read_pipe_csv_any(path)
+    if df.height == 0:
+        return None
+
+    # Ensure we have at least 6 columns so we can reference c1..c6 safely
+    need_cols = max(df.width, 6)
+    if df.width < need_cols:
+        for i in range(df.width + 1, need_cols + 1):
+            df = df.with_columns(pl.lit(None).alias(f"col_pad_{i}"))
+
+    # Rename all columns to c1..cN
+    df = df.rename({old: f"c{idx+1}" for idx, old in enumerate(df.columns)})
+
+    # If c7 exists, apply the “merge c5|c6 and shift c7 -> c6” rule
+    if "c7" in df.columns:
+        combined_5_6 = (
+            (pl.col("c5").cast(pl.Utf8).fill_null("") + "|" + pl.col("c6").cast(pl.Utf8).fill_null(""))
+            .str.replace(r"^\|+", "", literal=False)   # remove pipes at start
+            .str.replace(r"\|+$", "", literal=False)   # remove pipes at end
+        )
+
+        df = (
+            df.with_columns(
+                c5_fixed=pl.when(pl.col("c7").is_not_null())
+                          .then(combined_5_6)
+                          .otherwise(pl.col("c5")),
+                c6_fixed=pl.when(pl.col("c7").is_not_null())
+                          .then(pl.col("c7"))
+                          .otherwise(pl.col("c6")),
+            )
+            .drop(["c5", "c6"])        # drop originals
+            .rename({"c5_fixed": "c5", "c6_fixed": "c6"})
+        )
+
+        # Keep c1..c6; drop c7 (consumed). Preserve any c8..cN as-is.
+        keep = [f"c{i}" for i in range(1, 7)] + [
+            c for c in df.columns
+            if c.startswith("c") and c[1:].isdigit() and int(c[1:]) >= 8
+        ]
+        df = df.select([c for c in keep if c in df.columns])
+
+    # Remove rows where column 2 is missing/empty
+    if "c2" in df.columns:
+        # IMPORTANT: parenthesise the comparison before combining with '&'
+        df = df.filter(
+            pl.col("c2").is_not_null()
+            & (pl.col("c2").cast(pl.Utf8).str.strip_chars().str.len_chars() > 0)
+        )
+
+    if df.height == 0:
+        return None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / (path.stem + ".csv")
+    # Write WITH header so downstream can read with has_header=True
+    df.write_csv(out_path)
+    return out_path
+
+
+def clean_folder(raw_dir: Path, cleaned_dir: Path) -> list[Path]:
+    """
+    Clean every candidate file in raw_dir:
+      - *.csv
+      - *.txt
+      - extensionless files
+    """
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    cleaned_dir.mkdir(parents=True, exist_ok=True)
+
+    candidates = list(raw_dir.glob("**/*.csv")) + list(raw_dir.glob("**/*.txt")) + [
+        p for p in raw_dir.glob("**/*") if p.is_file() and p.suffix == ""
+    ]
+
+    out_files: list[Path] = []
+    for p in candidates:
+        out = clean_one_file(p, cleaned_dir)
+        if out:
+            out_files.append(out)
+    return out_files
+
+
+def clean_tree(raw_dir: Path, cleaned_dir: Path) -> list[Path]:
+    """
+    Public: cleans an entire tree of raw files into cleaned_dir.
+    Returns list of cleaned CSV paths.
+    """
+    return clean_folder(raw_dir, cleaned_dir)
+
+
+# ---------- master build ----------
+
+def build_master(cleaned_dir: Path, master_csv: Path) -> int:
+    """
+    Vertically concatenate all cleaned CSVs and write a master CSV.
+    Assumes cleaned files share the same column naming (c1..c6, possibly more).
+    Returns the total number of rows written (0 if none).
+    """
+    files = sorted(cleaned_dir.glob("**/*.csv"))
+    if not files:
+        # Ensure an empty file does not linger from a prior run
+        master_csv.parent.mkdir(parents=True, exist_ok=True)
+        if master_csv.exists():
+            master_csv.unlink(missing_ok=True)
+        return 0
+
+    dfs: list[pl.DataFrame] = []
+    for p in files:
+        try:
+            # CLEANED FILES WERE WRITTEN WITH HEADERS -> read with has_header=True
+            df = pl.read_csv(p, has_header=True)
+            # Normalize to c1..cN just in case
+            df = df.rename({old: f"c{idx+1}" for idx, old in enumerate(df.columns)})
+            dfs.append(df)
+        except Exception:
+            continue
+
+    if not dfs:
+        if master_csv.exists():
+            master_csv.unlink(missing_ok=True)
+        return 0
+
+    # Align columns to max width
+    max_cols = max(d.width for d in dfs)
+    aligned: list[pl.DataFrame] = []
+    for d in dfs:
+        if d.width < max_cols:
+            for i in range(d.width + 1, max_cols + 1):
+                d = d.with_columns(pl.lit(None).alias(f"c{i}"))
+        d = d.select([f"c{i}" for i in range(1, max_cols + 1)])
+        aligned.append(d)
+
+    master = pl.concat(aligned, how="vertical_relaxed")
+
+    master_csv.parent.mkdir(parents=True, exist_ok=True)
+    master.write_csv(master_csv)
+    return int(master.height)
