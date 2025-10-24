@@ -25,25 +25,18 @@ dirs = {
     "STATE": base / "output" / "temp" / "state",
 }
 
+COLS = [
+    "SETTLEMENT DATE",
+    "CUSIP",
+    "SYMBOL",
+    "QUANTITY (FAILS)",
+    "DESCRIPTION",
+    "PRICE",
+]
+
 def create_paths() -> Path:
     for m in dirs.values():
         if m.exists() == False:
             m.mkdir(parents=True, exist_ok=True)
             logging.info(f"Found - {m} missing, Building now")        
     logging.info("All Directories Found")    
-
-
-
-
-'''
-    files = {}
-    files["DOWNLOADED"] = dirs["STATE"] / "downloaded.json"
-    files["LAST_RUN"]   = dirs["STATE"] / "recent.json"
-    files["MASTER"]     = dirs["SRC"]   / "master.csv"
-
-    return dirs, files
-
-def SEC_URL() -> str:
-    return "https://www.sec.gov/data-research/sec-markets-data/fails-deliver-data"
-    
-    '''
