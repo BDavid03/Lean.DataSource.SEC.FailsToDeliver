@@ -1,14 +1,18 @@
 # CLRImports is required to handle Lean C# objects for Mapped Datasets (Single asset and Universe Selection)
 # Requirements:
+#
 # python -m pip install clr-loader==0.1.7
 # python -m pip install pythonnet==3.0.0a2
+#
 # This script must be executed in ./bin/Debug/net9.0 after the follwing command is executed
 # dotnet build .\DataProcessing\
+    
 import os
 from CLRImports import *
 
 # To use QuantBook, we need to set its internal handlers
 # We download LEAN confif with the default settings 
+
 with open("quantbook.json", 'w') as fp:
     from requests import get
     response = get("https://raw.githubusercontent.com/QuantConnect/Lean/master/Launcher/config.json")

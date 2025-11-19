@@ -26,7 +26,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 using QuantConnect;
 using QuantConnect.Configuration;
 using QuantConnect.Data.Auxiliary;
@@ -46,6 +45,7 @@ namespace QuantConnect.DataProcessing
         public const string VendorDataName = FailsToDeliver.SourceDirectory;
 
         private const string CatalogUrl = "https://www.sec.gov/data.json";
+        private const string CatalogHtmlUrl = "https://catalog.data.gov/dataset/fails-to-deliver-data";
 
         private readonly string _destinationFolder;
         private readonly string _universeFolder;
@@ -56,12 +56,8 @@ namespace QuantConnect.DataProcessing
         private readonly RateGate _indexGate;
         private readonly HttpClient _httpClient;
         private readonly bool _skipProcessedDistributions;
+        private readonly string _temporaryFolder;
         private ConcurrentDictionary<string, ConcurrentQueue<string>> _tempData = new();
-
-        private readonly JsonSerializerSettings _jsonSerializerSettings = new()
-        {
-            DateTimeZoneHandling = DateTimeZoneHandling.Utc
-        };
 
         /// <summary>
         /// Creates a new instance of the downloader
@@ -87,9 +83,11 @@ namespace QuantConnect.DataProcessing
             _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
 
             _skipProcessedDistributions = Config.GetBool("sec-skip-processed-distributions", true);
+            _temporaryFolder = Path.Combine(_destinationFolder, "tmp");
 
             Directory.CreateDirectory(_destinationFolder);
             Directory.CreateDirectory(_universeFolder);
+            Directory.CreateDirectory(_temporaryFolder);
         }
 
         /// <summary>
@@ -147,6 +145,7 @@ namespace QuantConnect.DataProcessing
                 {
                     try
                     {
+                        Log.Trace($"FailsToDeliverUniverseDataDownloader.Run(): Downloading {distribution.Title} ({distribution.DownloadUrl})");
                         var bytes = await DownloadBinary(distribution.DownloadUrl);
                         if (bytes == null || bytes.Length == 0)
                         {
@@ -236,37 +235,22 @@ namespace QuantConnect.DataProcessing
                 processedAny = true;
             }
 
-            Log.Trace($"FailsToDeliverUniverseDataDownloader.ProcessDistribution(): Processed {processedLines} rows for {distribution.Title}.");
+            var skipped = universeLines.Count - processedLines;
+            Log.Trace($"FailsToDeliverUniverseDataDownloader.ProcessDistribution(): Processed {processedLines:N0} rows for {distribution.Title}. Kept {processedLines:N0}, skipped {Math.Max(0, skipped):N0}.");
         }
 
         private List<DistributionMetadata> GetDistributionMetadata()
         {
-            var catalogContent = HttpRequester(CatalogUrl).Result;
-            if (string.IsNullOrWhiteSpace(catalogContent))
-            {
-                return new List<DistributionMetadata>();
-            }
-
-            var catalog = JsonConvert.DeserializeObject<SecCatalog>(catalogContent, _jsonSerializerSettings);
-            var dataset = catalog?.Dataset?
-                .FirstOrDefault(d =>
-                    string.Equals(d.Identifier, "https://www.sec.gov/node/86011", StringComparison.OrdinalIgnoreCase) ||
-                    (d.Title?.IndexOf("Fails-to-Deliver", StringComparison.OrdinalIgnoreCase) >= 0));
-
-            if (dataset?.Distribution == null || dataset.Distribution.Count == 0)
+            var html = HttpRequester(CatalogHtmlUrl).Result;
+            if (string.IsNullOrWhiteSpace(html))
             {
                 return new List<DistributionMetadata>();
             }
 
             var results = new List<DistributionMetadata>();
-            foreach (var distribution in dataset.Distribution)
+            foreach (var link in ScrapeDownloadLinks(html))
             {
-                if (string.IsNullOrWhiteSpace(distribution.DownloadUrl))
-                {
-                    continue;
-                }
-
-                var normalizedUrl = NormalizeDownloadUrl(distribution.DownloadUrl);
+                var normalizedUrl = NormalizeDownloadUrl(link);
                 var fileName = TryGetFileName(normalizedUrl);
                 if (string.IsNullOrEmpty(fileName))
                 {
@@ -277,13 +261,12 @@ namespace QuantConnect.DataProcessing
                 {
                     continue;
                 }
-                var processDate = GetProcessingDate(year, month, half);
 
                 results.Add(new DistributionMetadata
                 {
-                    Title = distribution.Title ?? $"{year}-{month:00}{half}",
+                    Title = $"{CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(month)} {year}, {(half == 'a' ? "first" : "second")} half",
                     DownloadUrl = normalizedUrl,
-                    ProcessDate = processDate
+                    ProcessDate = GetProcessingDate(year, month, half)
                 });
             }
 
@@ -495,6 +478,34 @@ namespace QuantConnect.DataProcessing
             return Path.GetFileNameWithoutExtension(url);
         }
 
+        private static IEnumerable<string> ScrapeDownloadLinks(string html)
+        {
+            const string marker = "https://www.sec.gov/files/data/fails-deliver-data/";
+            var links = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var span = html.AsSpan();
+            while (true)
+            {
+                var idx = span.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx == -1)
+                {
+                    break;
+                }
+
+                span = span[idx..];
+                var end = span.IndexOf('"');
+                if (end <= 0)
+                {
+                    break;
+                }
+
+                links.Add(span[..end].ToString());
+                span = span[end..];
+            }
+
+            return links;
+        }
+
         private bool AlreadyProcessed(DateTime processDate)
         {
             var universePath = Path.Combine(_universeFolder, $"{processDate.ToStringInvariant(DateFormat.EightCharacter)}.csv");
@@ -568,6 +579,12 @@ namespace QuantConnect.DataProcessing
             var finalPath = Path.Combine(destinationFolder, $"{name}.csv");
             var finalFileExists = File.Exists(finalPath);
 
+            if (_skipProcessedDistributions && finalFileExists)
+            {
+                File.AppendAllLines(finalPath, contents);
+                return;
+            }
+
             var lines = new HashSet<string>(contents);
             if (finalFileExists)
             {
@@ -583,7 +600,7 @@ namespace QuantConnect.DataProcessing
                     .OrderBy(x => DateTime.ParseExact(x.Split(',').First(), DateFormat.EightCharacter, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal))
                     .ToList();
 
-            var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.tmp");
+            var tempPath = Path.Combine(_temporaryFolder, $"{Guid.NewGuid()}.tmp");
             File.WriteAllLines(tempPath, finalLines);
             var tempFilePath = new FileInfo(tempPath);
             tempFilePath.MoveTo(finalPath, true);
@@ -621,35 +638,20 @@ namespace QuantConnect.DataProcessing
         /// </summary>
         public void Dispose()
         {
+            try
+            {
+                if (Directory.Exists(_temporaryFolder))
+                {
+                    Directory.Delete(_temporaryFolder, true);
+                }
+            }
+            catch (Exception err)
+            {
+                Log.Error(err, $"FailsToDeliverUniverseDataDownloader.Dispose(): Failed to delete temporary folder {_temporaryFolder}");
+            }
+
             _indexGate?.Dispose();
             _httpClient?.Dispose();
-        }
-
-        private sealed class SecCatalog
-        {
-            [JsonProperty("dataset")]
-            public List<SecDataset> Dataset { get; set; }
-        }
-
-        private sealed class SecDataset
-        {
-            [JsonProperty("identifier")]
-            public string Identifier { get; set; }
-
-            [JsonProperty("title")]
-            public string Title { get; set; }
-
-            [JsonProperty("distribution")]
-            public List<SecDistribution> Distribution { get; set; }
-        }
-
-        private sealed class SecDistribution
-        {
-            [JsonProperty("title")]
-            public string Title { get; set; }
-
-            [JsonProperty("downloadURL")]
-            public string DownloadUrl { get; set; }
         }
 
         private sealed class DistributionMetadata

@@ -16,8 +16,8 @@ This repository implements the QuantConnect LEAN integration for the U.S. Securi
 | `output/` | Sample data (same structure as the final Lean `Data/` directory). |
 | `listing-*.md`, `mycustomdata.json` | Documentation stubs used when the dataset is listed on the QuantConnect Data Market. |
 
-Two `config.json` files exist on purpose:
 
+Two `config.json` files exist:
 - Root `config.json` is used when running Lean (`dotnet run --project Launcher/QuantConnect.Lean.Launcher.csproj`, `lean backtest`, etc.).
 - `DataProcessing/config.json` is copied next to the downloader executable (so `dotnet run --project DataProcessing/DataProcessing.csproj` can resolve settings even outside this repo).
 
@@ -29,7 +29,7 @@ Keep the values in sync so the downloader and Lean read the same folders.
 
 - [.NET 9 SDK](https://dotnet.microsoft.com/download) (the repo targets `net9.0`).
 - Lean cloned next to this repository (`../Lean`) so the tests can reference `QuantConnect.Tests`.
-- Lean equity map files under `<Lean repo>/Data/equity/usa/map_files`. Without these, the downloader will skip every row because it cannot map tickers to Lean symbols.
+- Lean equity map files under `<Lean repo>/Data/equity/usa/map_files`. Without these, the downloader will skip every row because it cannot map tickers to Lean symbols, using LocalZipMapFileProvider.
 
 Optional but recommended:
 
@@ -54,9 +54,9 @@ The GitHub workflow (`.github/workflows/build.yml`) mirrors these steps inside t
 1. Update both `config.json` files:
    ```json
    {
-       "data-folder": "C:\\Users\\User\\source\\repos\\Lean\\Data\\",
-       "temp-output-directory": "C:\\Users\\User\\source\\repos\\Lean\\Data\\",
-       "sec-user-agent": "YourCompanyNameYourEmail@example.com"
+       "data-folder": ".\Lean\\Data\\",
+       "temp-output-directory": ".\Lean\\Data\\",
+       "sec-user-agent": "bondquantconnect@gmail.com"
    }
    ```
    Use absolute paths so the downloader can always locate Lean’s data directory.
@@ -95,7 +95,7 @@ The GitHub workflow (`.github/workflows/build.yml`) mirrors these steps inside t
    `dotnet test` ensures the data model serializes/clones correctly and that the sample algorithms compile against Lean.
 
 4. **QuantBook (optional)**  
-   Build `DataProcessing`, copy `process.sample.py` into `DataProcessing/bin/Debug/net9.0`, set `Config.Set("data-folder", "<path>")`, and run the script to inspect history via the notebook API.
+   Build `DataProcessing`, copy `process.sample.py` into `DataProcessing/bin/Debug/net9.0`, set `Config.Set("data-folder", "<path>")`, and run the script to inspect history via the notebook API. - pythonet error.
 
 ---
 
