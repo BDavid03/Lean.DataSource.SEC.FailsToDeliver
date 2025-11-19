@@ -14,6 +14,8 @@ with open("quantbook.json", 'w') as fp:
     response = get("https://raw.githubusercontent.com/QuantConnect/Lean/master/Launcher/config.json")
     fp.write(response.text)
 
+
+
 Config.SetConfigurationFile("quantbook.json")
 Config.Set("composer-dll-directory", os.path.dirname(os.path.realpath(__file__)))
 

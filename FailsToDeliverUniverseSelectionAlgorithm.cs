@@ -14,6 +14,7 @@
  *
 */
 
+using System.Collections.Generic;
 using System.Linq;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.DataSource;
@@ -23,7 +24,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// <summary>
     /// Example algorithm using the custom data type as a source of alpha
     /// </summary>
-    public class CustomDataUniverse : QCAlgorithm
+    public class FailsToDeliverUniverseSelectionAlgorithm : QCAlgorithm
     {
         /// <summary>
         /// Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.
@@ -33,35 +34,39 @@ namespace QuantConnect.Algorithm.CSharp
             // Data ADDED via universe selection is added with Daily resolution.
             UniverseSettings.Resolution = Resolution.Daily;
 
-            SetStartDate(2022, 2, 14);
-            SetEndDate(2022, 2, 18);
+            SetStartDate(2024, 1, 1);
+            SetEndDate(2024, 3, 1);
             SetCash(100000);
 
             // add a custom universe data source (defaults to usa-equity)
-            var universe = AddUniverse<MyCustomDataUniverse>(data =>
+            var universe = AddUniverse<FailsToDeliverUniverse>(data =>
             {
-                foreach (MyCustomDataUniverse datum in data)
+                var failsData = data.OfType<FailsToDeliverUniverse>().ToList();
+                foreach (var datum in failsData)
                 {
-                    Log($"{datum.Symbol},{datum.SomeCustomProperty},{datum.SomeNumericProperty}");
+                    if (datum.Quantity > 3_000_000)
+                    {
+                        Log($"{datum.Symbol}: {datum.Quantity:N0} shares failed on {datum.SettlementDate:yyyy-MM-dd}");
+                    }
                 }
 
                 // define our selection criteria
-                return from MyCustomDataUniverse d in data
-                       where d.SomeCustomProperty == "buy"
-                       select d.Symbol;
+                return failsData
+                    .Where(datum => datum.Quantity > 1_000_000)
+                    .Select(datum => datum.Symbol);
             });
 
             var history = History(universe, 1).ToList();
-            if (history.Count != 1)
+            if (history.Count == 0)
             {
-                throw new System.Exception($"Unexpected historical data count!");
+                throw new System.Exception("Expected historical universe data but received none.");
             }
             foreach (var dataForDate in history)
             {
-                var coarseData = dataForDate.ToList();
-                if (coarseData.Count < 300)
+                var coarseData = dataForDate.Cast<FailsToDeliverUniverse>().ToList();
+                if (coarseData.Count == 0)
                 {
-                    throw new System.Exception($"Unexpected historical universe data!");
+                    throw new System.Exception("Unexpected empty historical universe slice.");
                 }
             }
         }

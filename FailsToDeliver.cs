@@ -16,40 +16,42 @@
 
 using System;
 using NodaTime;
-using ProtoBuf;
 using System.IO;
 using QuantConnect.Data;
 using System.Collections.Generic;
 using System.Globalization;
-using QuantConnect.Data.UniverseSelection;
 
 namespace QuantConnect.DataSource
 {
     /// <summary>
-    /// Example custom data type
+    /// U.S. SEC Fails-to-Deliver data point
     /// </summary>
-    [ProtoContract(SkipConstructor = true)]
-    public class MyCustomDataUniverse : BaseDataCollection
+    public class FailsToDeliver : BaseData
     {
+        /// <summary>
+        /// Name of the directory where the dataset is stored
+        /// </summary>
+        public const string SourceDirectory = "sec-fails-to-deliver";
+
+        public string Cusip { get; set; }
+
+        public long Quantity { get; set; }
+
+        public decimal ReferencePrice { get; set; }
+
+        public DateTime SettlementDate { get; set; }
+
+        public DateTime ProcessingDate { get; set; }
+
         /// <summary>
         /// Time passed between the date of the data and the time the data became available to us
         /// </summary>
-        private readonly static TimeSpan _period = TimeSpan.FromDays(1);
-
-        /// <summary>
-        /// Some custom data property
-        /// </summary>
-        public string SomeCustomProperty { get; set; }
-
-        /// <summary>
-        /// Some custom data property
-        /// </summary>
-        public decimal SomeNumericProperty { get; set; }
+        public TimeSpan Period { get; set; } = TimeSpan.Zero;
 
         /// <summary>
         /// Time the data became available
         /// </summary>
-        public override DateTime EndTime => Time + _period;
+        public override DateTime EndTime => Time + Period;
 
         /// <summary>
         /// Return the URL string source of the file. This will be converted to a stream
@@ -64,12 +66,10 @@ namespace QuantConnect.DataSource
                 Path.Combine(
                     Globals.DataFolder,
                     "alternative",
-                    "mycustomdatatype",
-                    "universe",
-                    $"{date.ToStringInvariant(DateFormat.EightCharacter)}.csv"
+                    SourceDirectory,
+                    $"{config.Symbol.Value.ToLowerInvariant()}.csv"
                 ),
-                SubscriptionTransportMedium.LocalFile,
-                FileFormat.FoldingCollection
+                SubscriptionTransportMedium.LocalFile
             );
         }
 
@@ -83,18 +83,54 @@ namespace QuantConnect.DataSource
         /// <returns>New instance</returns>
         public override BaseData Reader(SubscriptionDataConfig config, string line, DateTime date, bool isLiveMode)
         {
-            var csv = line.Split(','); 
+            var csv = line.Split(',');
 
-            var someNumericProperty = decimal.Parse(csv[2], NumberStyles.Any, CultureInfo.InvariantCulture); 
+            var processingDate = Parse.DateTimeExact(csv[0], DateFormat.EightCharacter);
+            var settlementDate = Parse.DateTimeExact(csv[1], DateFormat.EightCharacter);
+            var price = decimal.Parse(csv[4], CultureInfo.InvariantCulture);
+            var quantity = long.Parse(csv[3], CultureInfo.InvariantCulture);
 
-            return new MyCustomDataUniverse
+            var notional = price * quantity;
+            return new FailsToDeliver
             {
-                Symbol = new Symbol(SecurityIdentifier.Parse(csv[0]), csv[1]),
-                SomeNumericProperty = someNumericProperty,
-                SomeCustomProperty = csv[3],
-                Time =  date - _period,
-                Value = someNumericProperty
+                Symbol = config.Symbol,
+                Cusip = csv[2],
+                Quantity = quantity,
+                ReferencePrice = price,
+                SettlementDate = settlementDate,
+                ProcessingDate = processingDate,
+                Time = processingDate,
+                Value = notional
             };
+        }
+
+        /// <summary>
+        /// Clones the data
+        /// </summary>
+        /// <returns>A clone of the object</returns>
+        public override BaseData Clone()
+        {
+            return new FailsToDeliver
+            {
+                Symbol = Symbol,
+                Time = Time,
+                EndTime = EndTime,
+                Cusip = Cusip,
+                Quantity = Quantity,
+                ReferencePrice = ReferencePrice,
+                SettlementDate = SettlementDate,
+                ProcessingDate = ProcessingDate,
+                Value = Value
+            };
+        }
+
+        /// <summary>
+        /// Indicates whether the data source is tied to an underlying symbol and requires that corporate events be applied to it as well, such as renames and delistings
+        /// </summary>
+        /// <returns>false</returns>
+        public override bool RequiresMapping()
+        {
+            return true;
         }
 
         /// <summary>
@@ -112,7 +148,7 @@ namespace QuantConnect.DataSource
         /// </summary>
         public override string ToString()
         {
-            return $"{Symbol} - {Value}";
+            return $"{Symbol} - Quantity: {Quantity} shares, Settlement: {SettlementDate:yyyy-MM-dd}";
         }
 
         /// <summary>
@@ -138,23 +174,6 @@ namespace QuantConnect.DataSource
         public override DateTimeZone DataTimeZone()
         {
             return DateTimeZone.Utc;
-        }
-
-        /// <summary>
-        /// Clones this instance
-        /// </summary>
-        public override BaseData Clone()
-        {
-            return new MyCustomDataUniverse
-            {
-                Symbol = Symbol,
-                Time = Time,
-                Data = Data,
-                Value = Value,
-
-                SomeNumericProperty = SomeNumericProperty,
-                SomeCustomProperty = SomeCustomProperty,
-            };
         }
     }
 }
