@@ -1,41 +1,32 @@
 {
-	"description": "",
-	
-	"platforms-features": [
-		{
-			"Platforms": ["Cloud Platform", "Local Platform", "LEAN CLI"],
-			"Download Data": [0,1,1],
-			"Backtesting": [0,1,1],
-			"Optimization": [0,1,1],
-			"Live Trading":	[0,1,1]
-		}
-	],
-	"data-supported": [ "TradeBar", "MyCustomData" ], 
-	"more-information": "https://www.mycustomdata.com",
-	"documentation": "",
-	"module-specification": {
-		"download": {
-			"data-types": [
-				"Trade",
-				"Quote",
-				"OpenInterest"
-			],
-			"resolutions": [
-				"Tick",
-				"Second",
-				"Minute",
-				"Hour",
-				"Daily"
-			],
-			"security-types": [
-				"Equity",
-				"FutureOption",
-				"..."
-			],
-			"markets": [
-				"USA",
-				"..."
-			]
-		}
-	}
+    "description": "Aggregated share quantities from the U.S. SEC Fails-to-Deliver (FTD) reports published twice per month. Each record is tagged with the symbol, CUSIP, settlement date, and the date when the report becomes available.",
+
+    "platforms-features": [
+        {
+            "Platforms": ["Cloud Platform", "Local Platform", "LEAN CLI"],
+            "Download Data": [1,1,1],
+            "Backtesting": [1,1,1],
+            "Optimization": [1,1,1],
+            "Live Trading": [1,1,1]
+        }
+    ],
+    "data-supported": [ "FailsToDeliver", "FailsToDeliverUniverse" ],
+    "more-information": "https://www.sec.gov/data-research/sec-markets-data/fails-deliver-data",
+    "documentation": "https://www.sec.gov/tm/faq-about-sec-fails-deliver-data",
+    "module-specification": {
+        "download": {
+            "data-types": [
+                "Base"
+            ],
+            "resolutions": [
+                "Daily"
+            ],
+            "security-types": [
+                "Equity"
+            ],
+            "markets": [
+                "USA"
+            ]
+        }
+    }
 }
